@@ -25,10 +25,20 @@ export interface SiemEvent {
   command: string;
   target_dn?: string;
   filter_string?: string;
-  outcome: 'SUCCESS' | 'AUTH_FAILED' | 'FORBIDDEN_CALLER' | 'FORBIDDEN_COMMAND' | 'RESTRICTED_TARGET' | 'VALIDATION_ERROR' | 'UPSTREAM_ERROR';
+  outcome: 'SUCCESS' | 'AUTH_FAILED' | 'FORBIDDEN_CALLER' | 'FORBIDDEN_COMMAND' | 'RESTRICTED_TARGET' | 'VALIDATION_ERROR' | 'UPSTREAM_ERROR' | 'SECURITY_ALERT_ROGUE_AGENT' | string;
   status_code: string;
   message: string;
   duration_ms: number;
+  severity?: number;
+  is_high_severity_alert?: boolean;
+  alert_rule?: string;
+  threat?: {
+    indicator: string;
+    rule?: string;
+    severity?: string;
+    risk_score?: number;
+    action?: string;
+  };
   parameters: Record<string, any>;
   details: Record<string, any>;
   domain: string;

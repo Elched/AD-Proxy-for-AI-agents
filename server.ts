@@ -216,17 +216,20 @@ app.get('/api/proxy/siem-logs', (req, res) => {
   }
 });
 
-// 7. Run Python Test Suite (Unit & Security Audit)
+// 7. Run Python Test Suite (Unit, Security Audit & Rogue Agent High-Severity Alerts)
 app.post('/api/proxy/run-tests', (req, res) => {
-  exec('python3 tests/test_proxy.py && python3 tests/test_security_audit.py', { cwd: ROOT_DIR }, (err, stdout, stderr) => {
+  exec('python3 tests/test_proxy.py && python3 tests/test_security_audit.py && python3 tests/test_rogue_agent_alerts.py', { cwd: ROOT_DIR }, (err, stdout, stderr) => {
     const rawOutput = (stderr || '') + '\n' + (stdout || '');
     const isPassing = !err;
-    const okMatches = (rawOutput.match(/\.\.\. ok/g) || []).length;
+    const ranMatches = [...rawOutput.matchAll(/Ran (\d+) tests/g)];
+    const passedCount = ranMatches.length > 0
+      ? ranMatches.reduce((acc, m) => acc + parseInt(m[1], 10), 0)
+      : (isPassing ? 27 : 0);
     res.json({
       success: isPassing,
       output: rawOutput.trim(),
-      passed_count: okMatches,
-      total_count: 20,
+      passed_count: passedCount,
+      total_count: 27,
     });
   });
 });

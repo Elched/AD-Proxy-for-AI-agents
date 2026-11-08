@@ -113,7 +113,7 @@ class AdProxyEngine:
         # ----------------------------------------------------------------------
         # STAGE 3: RBAC Authorization & Policy Enforcement
         # ----------------------------------------------------------------------
-        is_allowed, authz_msg, sanitized_params = self.rbac.evaluate_permission(
+        is_allowed, authz_msg, sanitized_params, is_high_severity_alert, alert_rule = self.rbac.evaluate_permission(
             caller=caller,
             command_name=cmd_name,
             parameters=params,
@@ -121,11 +121,27 @@ class AdProxyEngine:
         )
         if not is_allowed:
             duration_ms = (time.time() - start_time) * 1000.0
-            outcome = (
-                AuditOutcome.RESTRICTED_TARGET
-                if "protected" in authz_msg.lower() or "restricted" in authz_msg.lower()
-                else (AuditOutcome.FORBIDDEN_CALLER if "not authorized" in authz_msg.lower() else AuditOutcome.FORBIDDEN_COMMAND)
-            )
+            if is_high_severity_alert:
+                outcome = AuditOutcome.SECURITY_ALERT_ROGUE_AGENT
+                status_code = "CRITICAL_SECURITY_ALERT"
+                severity = 10
+                logger.error(
+                    "[HIGH SEVERITY SECURITY ALERT - ROGUE AGENT DETECTED] Account: '%s' | Action: '%s' | Target: '%s' | Rule: '%s' | %s",
+                    caller,
+                    cmd_name,
+                    params.get("group_name") or params.get("user_identifier") or "N/A",
+                    alert_rule or "ROGUE_AGENT_ALERT",
+                    authz_msg,
+                )
+            else:
+                severity = 7
+                status_code = "FORBIDDEN"
+                outcome = (
+                    AuditOutcome.RESTRICTED_TARGET
+                    if "protected" in authz_msg.lower() or "restricted" in authz_msg.lower()
+                    else (AuditOutcome.FORBIDDEN_CALLER if "not authorized" in authz_msg.lower() else AuditOutcome.FORBIDDEN_COMMAND)
+                )
+
             self._audit(
                 event_id=req_id,
                 caller=caller,
@@ -134,14 +150,17 @@ class AdProxyEngine:
                 target_dn=params.get("group_name") or params.get("user_identifier") or params.get("search_base"),
                 filter_str=params.get("search_filter"),
                 outcome=outcome,
-                status_code="FORBIDDEN",
+                status_code=status_code,
                 message=authz_msg,
                 duration_ms=duration_ms,
                 parameters=params,
+                severity=severity,
+                is_high_severity_alert=is_high_severity_alert,
+                alert_rule=alert_rule,
             )
             return ProxyResponse(
                 success=False,
-                status_code="FORBIDDEN",
+                status_code=status_code,
                 message=f"Access Denied: {authz_msg}",
                 request_id=req_id,
                 duration_ms=duration_ms,
@@ -185,6 +204,7 @@ class AdProxyEngine:
                 duration_ms=duration_ms,
                 parameters=sanitized_params or params,
                 details={"result_count": len(query_result) if isinstance(query_result, list) else 1},
+                severity=3,
             )
 
             return ProxyResponse(
@@ -254,6 +274,9 @@ class AdProxyEngine:
         duration_ms: float,
         parameters: Dict[str, Any],
         details: Dict[str, Any] = None,
+        severity: int = 5,
+        is_high_severity_alert: bool = False,
+        alert_rule: str = None,
     ):
         event = AuditEvent(
             event_id=event_id,
@@ -270,5 +293,8 @@ class AdProxyEngine:
             parameters=self.scrub_sensitive_dict(parameters or {}),
             details=self.scrub_sensitive_dict(details or {}),
             domain=self.config.active_directory.domain_name,
+            severity=severity,
+            is_high_severity_alert=is_high_severity_alert,
+            alert_rule=alert_rule,
         )
         self.siem.log(event)

@@ -36,6 +36,7 @@ class AuditOutcome(str, Enum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     UPSTREAM_ERROR = "UPSTREAM_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
+    SECURITY_ALERT_ROGUE_AGENT = "SECURITY_ALERT_ROGUE_AGENT"
 
 
 class CommandRiskLevel(str, Enum):
@@ -176,3 +177,6 @@ class AuditEvent:
     parameters: Dict[str, Any] = field(default_factory=dict)
     details: Dict[str, Any] = field(default_factory=dict)
     domain: str = ""
+    severity: int = 5
+    is_high_severity_alert: bool = False
+    alert_rule: Optional[str] = None

@@ -474,6 +474,55 @@ curl -k -X POST https://127.0.0.1:10636/v1/ldaps/query \
 CEF:0|EnterpriseSecurity|ActiveDirectoryProxy|1.0|SUCCESS|list_group_members|3|src=10.0.4.15 suser=ai-triage-agent cs1Label=Command cs1=list_group_members outcome=SUCCESS cn1Label=DurationMs cn1=12 msg=Executed Active Directory LDAPS command 'list_group_members' successfully. cs2Label=TargetDN cs2=VPN-Users cs4Label=Domain cs4=corp.acme.internal
 ```
 
+### 3. Rogue Agent Critical Threat Alert (CEF Severity 10)
+```
+CEF:0|EnterpriseSecurity|ActiveDirectoryProxy|1.0|CRITICAL_SECURITY_ALERT|reset_password|10|src=127.0.0.1 suser=ai-triage-agent cs1Label=Command cs1=reset_password outcome=SECURITY_ALERT_ROGUE_AGENT cat=Threat/RogueAgent act=BLOCKED_CRITICAL_SECURITY_ALERT cs5Label=AlertRule cs5=ROGUE_AGENT_ADMIN_PASSWORD_RESET_ATTEMPT msg=CRITICAL SECURITY ALERT: Rogue/hallucinating agent 'ai-triage-agent' attempted unsanctioned password reset on protected administrative account 'administrator'.
+```
+
+### 4. Rogue Agent Threat Indicator (ECS JSON)
+```json
+{
+  "@timestamp": "2026-11-08T08:52:10.120400+00:00",
+  "event": {
+    "action": "ad_proxy.reset_password",
+    "outcome": "failure",
+    "severity": 10,
+    "reason": "CRITICAL SECURITY ALERT: Rogue/hallucinating agent 'ai-triage-agent' attempted unsanctioned password reset on protected administrative account 'administrator'."
+  },
+  "threat": {
+    "indicator": "ROGUE_OR_HALLUCINATING_AGENT_DETECTED",
+    "rule": "ROGUE_AGENT_ADMIN_PASSWORD_RESET_ATTEMPT",
+    "severity": "CRITICAL",
+    "risk_score": 100,
+    "action": "BLOCKED_TERMINATED"
+  },
+  "user": { "name": "ai-triage-agent" },
+  "active_directory": {
+    "command": "reset_password",
+    "status_code": "CRITICAL_SECURITY_ALERT"
+  }
+}
+```
+
+---
+
+## Rogue & Hallucinating Agent Detection Subsystem
+
+Autonomous AI agents operating in enterprise environments may hallucinate or fall victim to prompt injection / jailbreak attempts. To prevent disastrous Active Directory compromise, the AD-Proxy enforces high-severity error detection heuristics:
+
+| Threat Pattern | Target Criteria | Severity | Alert Rule |
+| :--- | :--- | :--- | :--- |
+| **Admin Password Reset** | Agent invokes `reset_password` on `administrator`, `admin`, `domain administrator`, or `krbtgt` | **10 / Critical** | `ROGUE_AGENT_ADMIN_PASSWORD_RESET_ATTEMPT` |
+| **Critical Group Tampering** | Agent invokes any command targeting `Domain Administrators`, `Enterprise Admins`, `Schema Admins`, `Domain Controllers` | **10 / Critical** | `ROGUE_AGENT_CRITICAL_GROUP_TARGET` |
+| **Admin Account Tampering** | Agent attempts `disable_account`, `unlock_account`, or attribute modification on `administrator` | **10 / Critical** | `ROGUE_AGENT_ADMIN_ACCOUNT_TAMPERING` |
+| **Unregistered Privileged Action** | Unregistered or rogue agent attempts write commands | **10 / Critical** | `ROGUE_AGENT_UNREGISTERED_PRIVILEGED_ACTION` |
+
+When any heuristic triggers:
+1. The connection is terminated immediately before any LDAP packets reach Domain Controllers.
+2. An error log with `[HIGH SEVERITY SECURITY ALERT - ROGUE AGENT DETECTED]` is emitted to standard error and system logs.
+3. SIEM feeds receive Severity 10 CEF alerts and ECS records with `threat.indicator: ROGUE_OR_HALLUCINATING_AGENT_DETECTED`.
+4. The caller receives a `CRITICAL_SECURITY_ALERT` response.
+
 ---
 
 ## License & Compliance

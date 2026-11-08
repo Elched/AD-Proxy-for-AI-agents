@@ -39,6 +39,17 @@ class SiemAuditLogger:
         if not self.config.enabled:
             return
 
+        # High-severity alert logger for rogue or hallucinating agents
+        if getattr(event, "is_high_severity_alert", False):
+            logger.critical(
+                "[CRITICAL SECURITY ALERT - ROGUE AGENT DETECTED] Account: '%s' | Command: '%s' | Target: '%s' | Rule: '%s' | %s",
+                event.caller_account,
+                event.command,
+                event.target_dn or "N/A",
+                getattr(event, "alert_rule", "ROGUE_AGENT_ALERT"),
+                event.message,
+            )
+
         # Always save structured dict in memory for UI / API access
         event_dict = self._to_event_dict(event)
         self._recent_events.appendleft(event_dict)
@@ -49,7 +60,8 @@ class SiemAuditLogger:
         for dest in self.config.destinations:
             dest_lower = dest.lower()
             if dest_lower == "stdout":
-                print(f"[AUDIT-SIEM] {formatted_str}", flush=True)
+                prefix = "[CRITICAL-SECURITY-ALERT] [SIEM]" if getattr(event, "is_high_severity_alert", False) else "[AUDIT-SIEM]"
+                print(f"{prefix} {formatted_str}", flush=True)
             elif dest_lower == "file":
                 self._write_file(formatted_str)
             elif dest_lower == "syslog":
@@ -77,6 +89,9 @@ class SiemAuditLogger:
             "parameters": e.parameters,
             "details": e.details,
             "domain": e.domain,
+            "severity": self._get_severity(e),
+            "is_high_severity_alert": getattr(e, "is_high_severity_alert", False),
+            "alert_rule": getattr(e, "alert_rule", None),
         }
 
     def _format_event(self, e: AuditEvent) -> str:
@@ -87,22 +102,24 @@ class SiemAuditLogger:
         else:
             return self._format_ecs(e)
 
-    def _get_severity(self, outcome: AuditOutcome) -> int:
-        """Maps outcome to CEF severity (0-10 scale)."""
-        if outcome == AuditOutcome.SUCCESS:
+    def _get_severity(self, e: AuditEvent) -> int:
+        """Maps outcome to CEF severity (0-10 scale). High-severity rogue agent attempts receive 10."""
+        if getattr(e, "is_high_severity_alert", False) or e.outcome == AuditOutcome.SECURITY_ALERT_ROGUE_AGENT:
+            return 10
+        if e.outcome == AuditOutcome.SUCCESS:
             return 3
-        elif outcome in (AuditOutcome.AUTH_FAILED, AuditOutcome.FORBIDDEN_CALLER):
+        elif e.outcome in (AuditOutcome.AUTH_FAILED, AuditOutcome.FORBIDDEN_CALLER):
             return 8
-        elif outcome in (AuditOutcome.FORBIDDEN_COMMAND, AuditOutcome.RESTRICTED_TARGET):
+        elif e.outcome in (AuditOutcome.FORBIDDEN_COMMAND, AuditOutcome.RESTRICTED_TARGET):
             return 7
-        return 5
+        return getattr(e, "severity", 5)
 
     def _format_cef(self, e: AuditEvent) -> str:
         """
         Common Event Format (CEF) standard string:
         CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
         """
-        sev = self._get_severity(e.outcome)
+        sev = self._get_severity(e)
         escaped_msg = e.message.replace("|", "\\|")
         ext_parts = [
             f"src={e.client_ip}",
@@ -119,6 +136,11 @@ class SiemAuditLogger:
             ext_parts.append(f"cs3Label=LdapFilter cs3={escaped_filter}")
         if e.domain:
             ext_parts.append(f"cs4Label=Domain cs4={e.domain}")
+        if getattr(e, "is_high_severity_alert", False):
+            ext_parts.append("cat=Threat/RogueAgent")
+            ext_parts.append("act=BLOCKED_CRITICAL_SECURITY_ALERT")
+            rule = getattr(e, "alert_rule", "ROGUE_AGENT_CRITICAL_TARGET_VIOLATION") or "ROGUE_AGENT_CRITICAL_TARGET_VIOLATION"
+            ext_parts.append(f"cs5Label=AlertRule cs5={rule}")
 
         extension = " ".join(ext_parts)
         return f"CEF:0|EnterpriseSecurity|ActiveDirectoryProxy|1.0|{e.status_code}|{e.command}|{sev}|{extension}"
@@ -126,14 +148,20 @@ class SiemAuditLogger:
     def _format_ecs(self, e: AuditEvent) -> str:
         """Elastic Common Schema (ECS) JSON representation."""
         is_success = e.outcome == AuditOutcome.SUCCESS
+        sev = self._get_severity(e)
+        categories = ["iam", "network"]
+        if getattr(e, "is_high_severity_alert", False):
+            categories.extend(["threat", "security_violation"])
+
         ecs_obj = {
             "@timestamp": e.timestamp or datetime.now(timezone.utc).isoformat(),
             "event": {
                 "id": e.event_id,
-                "category": ["iam", "network"],
-                "type": ["access", "protocol"],
+                "category": categories,
+                "type": ["access", "denial"] if not is_success else ["access", "protocol"],
                 "action": f"ad_proxy.{e.command}",
                 "outcome": "success" if is_success else "failure",
+                "severity": sev,
                 "duration": int(e.duration_ms * 1_000_000),  # nanoseconds in ECS
                 "reason": e.message,
             },
@@ -156,6 +184,16 @@ class SiemAuditLogger:
                 "version": "1.0.0",
             },
         }
+
+        if getattr(e, "is_high_severity_alert", False):
+            ecs_obj["threat"] = {
+                "indicator": "ROGUE_OR_HALLUCINATING_AGENT_DETECTED",
+                "rule": getattr(e, "alert_rule", "CRITICAL_TIER0_TARGET_VIOLATION"),
+                "severity": "CRITICAL",
+                "risk_score": 100,
+                "action": "BLOCKED_TERMINATED",
+            }
+
         return json.dumps(ecs_obj, separators=(",", ":"))
 
     def _format_syslog_rfc5424(self, e: AuditEvent) -> str:

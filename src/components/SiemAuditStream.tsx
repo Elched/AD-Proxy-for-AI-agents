@@ -44,7 +44,9 @@ export const SiemAuditStream: React.FC = () => {
 
   const filteredEvents = events.filter((e) => {
     if (outcomeFilter !== 'ALL') {
-      if (outcomeFilter === 'BLOCKED') {
+      if (outcomeFilter === 'SECURITY_ALERTS') {
+        if (!e.is_high_severity_alert && e.severity !== 10 && e.outcome !== 'SECURITY_ALERT_ROGUE_AGENT') return false;
+      } else if (outcomeFilter === 'BLOCKED') {
         if (e.outcome === 'SUCCESS') return false;
       } else if (e.outcome !== outcomeFilter) {
         return false;
@@ -56,7 +58,8 @@ export const SiemAuditStream: React.FC = () => {
       const matchCmd = e.command?.toLowerCase().includes(q);
       const matchTarget = e.target_dn?.toLowerCase().includes(q);
       const matchMsg = e.message?.toLowerCase().includes(q);
-      return matchCaller || matchCmd || matchTarget || matchMsg;
+      const matchRule = e.alert_rule?.toLowerCase().includes(q);
+      return matchCaller || matchCmd || matchTarget || matchMsg || matchRule;
     }
     return true;
   });
@@ -73,8 +76,10 @@ export const SiemAuditStream: React.FC = () => {
   };
 
   const toCefFormat = (e: SiemEvent): string => {
-    const sev = e.outcome === 'SUCCESS' ? 3 : e.outcome === 'AUTH_FAILED' ? 8 : 7;
-    return `CEF:0|EnterpriseSecurity|ActiveDirectoryProxy|1.0|${e.status_code || e.outcome}|${e.command}|${sev}|src=${e.client_ip || '127.0.0.1'} suser=${e.caller_account} cs1Label=Command cs1=${e.command} outcome=${e.outcome} msg=${(e.message || '').replace(/\|/g, '\\|')}`;
+    const isAlert = e.is_high_severity_alert || e.severity === 10 || e.outcome === 'SECURITY_ALERT_ROGUE_AGENT';
+    const sev = isAlert ? 10 : (e.severity ?? (e.outcome === 'SUCCESS' ? 3 : e.outcome === 'AUTH_FAILED' ? 8 : 7));
+    const extra = isAlert ? ` cat=Threat/RogueAgent act=BLOCKED_CRITICAL_SECURITY_ALERT cs5Label=AlertRule cs5=${e.alert_rule || 'ROGUE_AGENT_GENERIC'}` : '';
+    return `CEF:0|EnterpriseSecurity|ActiveDirectoryProxy|1.0|${e.status_code || e.outcome}|${e.command}|${sev}|src=${e.client_ip || '127.0.0.1'} suser=${e.caller_account} cs1Label=Command cs1=${e.command} outcome=${e.outcome}${extra} msg=${(e.message || '').replace(/\|/g, '\\|')}`;
   };
 
   return (
@@ -111,15 +116,28 @@ export const SiemAuditStream: React.FC = () => {
         <div className="flex flex-wrap items-center justify-between gap-3 mt-4 pt-3 border-t border-slate-800 text-xs">
           {/* Outcome Filter */}
           <div className="flex items-center gap-1 p-1 bg-slate-950 rounded-md border border-slate-800">
-            {['ALL', 'SUCCESS', 'BLOCKED', 'AUTH_FAILED', 'FORBIDDEN'].map((f) => (
+            {[
+              { id: 'ALL', label: 'All Events' },
+              { id: 'SECURITY_ALERTS', label: '🚨 Critical Alerts (Sev 10)' },
+              { id: 'SUCCESS', label: 'Success' },
+              { id: 'BLOCKED', label: 'Blocked' },
+              { id: 'AUTH_FAILED', label: 'Auth Failed' },
+              { id: 'FORBIDDEN', label: 'Forbidden' },
+            ].map((f) => (
               <button
-                key={f}
-                onClick={() => setOutcomeFilter(f)}
+                key={f.id}
+                onClick={() => setOutcomeFilter(f.id)}
                 className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 ${
-                  outcomeFilter === f ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-slate-200'
+                  outcomeFilter === f.id
+                    ? f.id === 'SECURITY_ALERTS'
+                      ? 'bg-rose-900 text-rose-100 font-bold'
+                      : 'bg-slate-800 text-white'
+                    : f.id === 'SECURITY_ALERTS'
+                    ? 'text-rose-400 hover:text-rose-200'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                {f === 'ALL' ? 'All Events' : f}
+                {f.label}
               </button>
             ))}
           </div>
@@ -129,7 +147,7 @@ export const SiemAuditStream: React.FC = () => {
             <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
             <input
               type="text"
-              placeholder="Search caller, command, target..."
+              placeholder="Search caller, command, target, rule..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full bg-slate-950 border border-slate-800 rounded-md pl-8 pr-3 py-1 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
@@ -148,7 +166,7 @@ export const SiemAuditStream: React.FC = () => {
                 <th className="px-4 py-3 font-semibold">Caller Service Account</th>
                 <th className="px-4 py-3 font-semibold">AD Command</th>
                 <th className="px-4 py-3 font-semibold">Target Object / DN</th>
-                <th className="px-4 py-3 font-semibold">Outcome</th>
+                <th className="px-4 py-3 font-semibold">Outcome & Severity</th>
                 <th className="px-4 py-3 font-semibold text-right">Duration</th>
                 <th className="px-4 py-3 text-right">Detail</th>
               </tr>
@@ -163,36 +181,57 @@ export const SiemAuditStream: React.FC = () => {
               ) : (
                 filteredEvents.map((evt, idx) => {
                   const isSuccess = evt.outcome === 'SUCCESS';
+                  const isRogueAlert = evt.is_high_severity_alert || evt.severity === 10 || evt.outcome === 'SECURITY_ALERT_ROGUE_AGENT';
                   return (
                     <tr
                       key={evt.event_id || idx}
-                      className="hover:bg-slate-800/40 transition-colors cursor-pointer"
+                      className={`transition-colors cursor-pointer ${
+                        isRogueAlert
+                          ? 'bg-rose-950/25 hover:bg-rose-950/45 border-l-4 border-l-rose-500'
+                          : 'hover:bg-slate-800/40'
+                      }`}
                       onClick={() => setSelectedEvent(evt)}
                     >
                       <td className="px-4 py-2.5 text-[11px] text-slate-400 tabular-nums whitespace-nowrap">
                         {evt.timestamp ? evt.timestamp.replace('T', ' ').slice(0, 19) : 'Just now'}
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
-                        <span className="text-slate-200 font-semibold">{evt.caller_account}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-emerald-400 whitespace-nowrap">
-                        {evt.command}
-                      </td>
-                      <td className="px-4 py-2.5 text-slate-400 truncate max-w-xs">
-                        {evt.target_dn || '-'}
+                        <span className={`font-semibold ${isRogueAlert ? 'text-rose-200' : 'text-slate-200'}`}>
+                          {evt.caller_account}
+                        </span>
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
-                        <span
-                          className={`text-[11px] px-2 py-0.5 rounded ${
-                            isSuccess
-                              ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/80'
-                              : evt.outcome === 'AUTH_FAILED'
-                              ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
-                              : 'bg-amber-950/80 text-amber-400 border border-amber-800/80'
-                          }`}
-                        >
-                          {evt.status_code || evt.outcome}
+                        <span className={isRogueAlert ? 'text-rose-400 font-bold' : 'text-emerald-400'}>
+                          {evt.command}
                         </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-slate-400 truncate max-w-xs">
+                        <div>{evt.target_dn || '-'}</div>
+                        {evt.alert_rule && (
+                          <div className="text-[10px] text-rose-400 font-semibold truncate mt-0.5">
+                            Rule: {evt.alert_rule}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        {isRogueAlert ? (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-rose-900/90 text-rose-100 border border-rose-500 flex items-center gap-1 w-max">
+                            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse"></span>
+                            CRITICAL (SEV 10)
+                          </span>
+                        ) : (
+                          <span
+                            className={`text-[11px] px-2 py-0.5 rounded ${
+                              isSuccess
+                                ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/80'
+                                : evt.outcome === 'AUTH_FAILED'
+                                ? 'bg-rose-950/80 text-rose-400 border border-rose-800/80'
+                                : 'bg-amber-950/80 text-amber-400 border border-amber-800/80'
+                            }`}
+                          >
+                            {evt.status_code || evt.outcome}
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums text-slate-400 text-[11px]">
                         {evt.duration_ms !== undefined ? `${evt.duration_ms.toFixed(2)} ms` : '-'}
@@ -234,6 +273,30 @@ export const SiemAuditStream: React.FC = () => {
                 ✕
               </button>
             </div>
+
+            {/* High-Severity Security Alert Banner in Modal */}
+            {(selectedEvent.is_high_severity_alert || selectedEvent.severity === 10 || selectedEvent.outcome === 'SECURITY_ALERT_ROGUE_AGENT') && (
+              <div className="p-3.5 rounded bg-rose-950/50 border border-rose-600 text-rose-200 space-y-1.5">
+                <div className="flex items-center gap-2 font-bold text-sm text-rose-300">
+                  <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>HIGH SEVERITY SECURITY ALERT - ROGUE AGENT DETECTED</span>
+                  <span className="ml-auto font-mono text-xs bg-rose-900 px-2 py-0.5 rounded text-white border border-rose-500">SEVERITY: 10</span>
+                </div>
+                <p className="text-[11px] text-rose-300 leading-relaxed">
+                  The AD-Proxy intercepted and blocked an unsanctioned privileged request targeting Tier-0 Active Directory assets. The connection was terminated immediately and escalated to SIEM SOC.
+                </p>
+                <div className="grid grid-cols-2 gap-2 pt-1 text-[11px] font-mono">
+                  <div>
+                    <span className="text-rose-400/80">Trigger Rule: </span>
+                    <span className="text-white font-bold">{selectedEvent.alert_rule || 'ROGUE_AGENT_UNAUTHORIZED_TARGET'}</span>
+                  </div>
+                  <div>
+                    <span className="text-rose-400/80">Threat Indicator: </span>
+                    <span className="text-white font-bold">{selectedEvent.threat?.indicator || 'ROGUE_OR_HALLUCINATING_AGENT'}</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3 p-3 bg-slate-950 rounded border border-slate-800">
               <div>

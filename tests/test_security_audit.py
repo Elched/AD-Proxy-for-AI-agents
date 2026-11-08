@@ -170,7 +170,7 @@ class SecurityAuditTest(unittest.TestCase):
             )
             res = self.engine.process_request(req)
             self.assertFalse(res.success, f"Failed to block protected group: {grp}")
-            self.assertEqual(res.status_code, "FORBIDDEN")
+            self.assertIn(res.status_code, ("FORBIDDEN", "CRITICAL_SECURITY_ALERT"))
             self.assertIn("protected Tier-0", res.message)
 
     def test_07_tls_minimum_version_and_security(self):

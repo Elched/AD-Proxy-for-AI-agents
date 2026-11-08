@@ -36,7 +36,7 @@ export const TestRunner: React.FC<TestRunnerProps> = ({ onRunFinished }) => {
         success: false,
         output: 'Failed to run test suite: ' + err.message,
         passed_count: 0,
-        total_count: 20,
+        total_count: 27,
       });
     } finally {
       setRunning(false);
@@ -45,6 +45,9 @@ export const TestRunner: React.FC<TestRunnerProps> = ({ onRunFinished }) => {
 
   const securityCheckpoints = [
     { name: 'RFC 4515 LDAP Injection Sanitization', desc: 'Escapes null bytes, asterisks, and unbalanced parenthesis in queries' },
+    { name: 'Rogue Agent Admin Password Reset Detection', desc: 'Detects and flags Severity 10 alerts on password resets targeting Administrator/admin accounts' },
+    { name: 'Critical Privileged Group Guard', desc: 'Immediately intercepts and generates critical alerts on Domain Admins/Enterprise Admins tampering' },
+    { name: 'SIEM Threat Indicator Injection', desc: 'Injects threat.indicator ROGUE_OR_HALLUCINATING_AGENT_DETECTED into ECS JSON & Severity=10 in CEF' },
     { name: 'Domain Controller LDAPS Simple Bind', desc: 'Validates calling AI agent credentials against DC pool' },
     { name: 'Constant-Time Credential Comparison', desc: 'Immunizes password verification against timing attacks via hmac.compare_digest' },
     { name: 'Authentication Failure Defense', desc: 'Terminates connection and logs high-severity event on bad credentials' },
@@ -78,12 +81,12 @@ export const TestRunner: React.FC<TestRunnerProps> = ({ onRunFinished }) => {
             {running ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Running 20 Security & Regression Tests...</span>
+                <span>Running 27 Security & Regression Tests...</span>
               </>
             ) : (
               <>
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Execute Python Test Suite</span>
+                <span>Execute Complete Test Suite (27 Tests)</span>
               </>
             )}
           </button>
@@ -140,7 +143,7 @@ export const TestRunner: React.FC<TestRunnerProps> = ({ onRunFinished }) => {
       {result && (
         <div className="rounded-lg border border-slate-800 bg-slate-950 overflow-hidden">
           <div className="px-4 py-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-xs text-slate-400 font-mono">
-            <span>Terminal: python3 tests/test_proxy.py</span>
+            <span>Terminal: python3 tests/test_proxy.py && test_security_audit.py && test_rogue_agent_alerts.py</span>
             <span>Exit Code: 0</span>
           </div>
           <pre className="p-4 text-[11px] font-mono text-emerald-400 overflow-x-auto whitespace-pre-wrap max-h-96 leading-relaxed">

@@ -220,36 +220,69 @@ export const AgentSimulator: React.FC<AgentSimulatorProps> = ({
               </div>
             </div>
 
-            {/* Quick Test Credential Failures */}
-            <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-400">
-              <span className="text-slate-500">Quick tests:</span>
-              <button
-                type="button"
-                onClick={() => setPassword('WrongPassword123!')}
-                className="hover:text-amber-400 underline transition-colors"
-              >
-                Test Bad Password (Auth Fail)
-              </button>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                onClick={() => setTicketId('')}
-                className="hover:text-amber-400 underline transition-colors"
-              >
-                Omit Ticket ID
-              </button>
-              <span aria-hidden="true">·</span>
-              <button
-                type="button"
-                onClick={() => {
-                  const found = PRESET_ACCOUNTS.find((a) => a.id === callerAccount);
-                  if (found) setPassword(found.defaultPassword);
-                  setTicketId('INC-2026-8819');
-                }}
-                className="hover:text-emerald-400 underline transition-colors"
-              >
-                Reset Valid
-              </button>
+            {/* Quick Test Credential Failures & Rogue Agent Attacks */}
+            <div className="space-y-1.5 pt-1 text-[11px] text-slate-400">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-slate-500">Quick tests:</span>
+                <button
+                  type="button"
+                  onClick={() => setPassword('WrongPassword123!')}
+                  className="hover:text-amber-400 underline transition-colors"
+                >
+                  Bad Password
+                </button>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  onClick={() => setTicketId('')}
+                  className="hover:text-amber-400 underline transition-colors"
+                >
+                  Omit Ticket
+                </button>
+                <span aria-hidden="true">·</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const found = PRESET_ACCOUNTS.find((a) => a.id === callerAccount);
+                    if (found) setPassword(found.defaultPassword);
+                    setTicketId('INC-2026-8819');
+                  }}
+                  className="hover:text-emerald-400 underline transition-colors"
+                >
+                  Reset Valid
+                </button>
+              </div>
+
+              {/* Rogue Agent Attack Simulation Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800/60">
+                <span className="text-rose-400 font-semibold">Simulate Rogue Agent:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCommand('reset_password');
+                    setParameters({
+                      user_identifier: 'administrator',
+                      new_password: 'CompromisedPass123!'
+                    });
+                  }}
+                  className="text-rose-300 hover:text-rose-200 bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 px-2 py-0.5 rounded text-[10px] font-semibold transition-colors"
+                >
+                  Reset Admin Password (Sev 10)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedCommand('add_user_to_group');
+                    setParameters({
+                      group_name: 'Domain Administrators',
+                      user_identifier: 'ai-triage-agent'
+                    });
+                  }}
+                  className="text-rose-300 hover:text-rose-200 bg-rose-950/80 hover:bg-rose-900 border border-rose-800/80 px-2 py-0.5 rounded text-[10px] font-semibold transition-colors"
+                >
+                  Tamper Domain Admins (Sev 10)
+                </button>
+              </div>
             </div>
 
             {/* 3. Command Selector */}
@@ -426,7 +459,9 @@ export const AgentSimulator: React.FC<AgentSimulatorProps> = ({
             <div className="flex items-start gap-3 p-2.5 rounded bg-slate-950/60 border border-slate-800/80">
               <div className="mt-0.5">
                 {result ? (
-                  result.status_code === 'FORBIDDEN' || result.status_code === 'INVALID_INPUT' ? (
+                  result.status_code === 'CRITICAL_SECURITY_ALERT' ? (
+                    <ShieldAlert className="w-4 h-4 text-rose-500 animate-pulse" />
+                  ) : result.status_code === 'FORBIDDEN' || result.status_code === 'INVALID_INPUT' ? (
                     <XCircle className="w-4 h-4 text-rose-400" />
                   ) : result.success ? (
                     <CheckCircle2 className="w-4 h-4 text-emerald-400" />
@@ -439,15 +474,29 @@ export const AgentSimulator: React.FC<AgentSimulatorProps> = ({
               </div>
               <div className="flex-1 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-slate-200">3. Granular RBAC & Privilege Escalation Check</span>
+                  <span className="font-semibold text-slate-200">3. Granular RBAC & Rogue Agent Interceptor</span>
                   {result && (
-                    <span className={`text-[11px] font-mono ${result.status_code === 'FORBIDDEN' ? 'text-rose-400' : result.success ? 'text-emerald-400' : 'text-slate-400'}`}>
-                      {result.status_code === 'FORBIDDEN' ? 'DENIED' : result.success ? 'PASSED' : 'SKIPPED'}
+                    <span className={`text-[11px] font-mono font-bold ${
+                      result.status_code === 'CRITICAL_SECURITY_ALERT'
+                        ? 'text-rose-400'
+                        : result.status_code === 'FORBIDDEN'
+                        ? 'text-rose-400'
+                        : result.success
+                        ? 'text-emerald-400'
+                        : 'text-slate-400'
+                    }`}>
+                      {result.status_code === 'CRITICAL_SECURITY_ALERT'
+                        ? '🚨 ROGUE AGENT DETECTED (SEV 10)'
+                        : result.status_code === 'FORBIDDEN'
+                        ? 'DENIED'
+                        : result.success
+                        ? 'PASSED'
+                        : 'SKIPPED'}
                     </span>
                   )}
                 </div>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Checks allowlist, permitted commands, OU scope, and blocks modifications to protected groups.
+                  Evaluates RBAC and intercepts rogue or hallucinating agents attempting attacks on Tier-0 groups/admins.
                 </p>
               </div>
             </div>
@@ -535,19 +584,33 @@ export const AgentSimulator: React.FC<AgentSimulatorProps> = ({
                 className={`p-3 rounded border text-xs flex items-start gap-2.5 ${
                   result.success
                     ? 'bg-emerald-950/40 border-emerald-800/80 text-emerald-200'
+                    : result.status_code === 'CRITICAL_SECURITY_ALERT'
+                    ? 'bg-rose-950/70 border-rose-600 text-rose-100 shadow-lg shadow-rose-950/50'
                     : 'bg-rose-950/40 border-rose-800/80 text-rose-200'
                 }`}
               >
                 {result.success ? (
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                 ) : (
-                  <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
                 )}
-                <div>
-                  <div className="font-semibold">{result.message}</div>
+                <div className="flex-1">
+                  <div className="font-semibold flex items-center justify-between">
+                    <span>{result.message}</span>
+                    {result.status_code === 'CRITICAL_SECURITY_ALERT' && (
+                      <span className="font-mono text-[10px] bg-rose-900 border border-rose-500 text-rose-100 px-2 py-0.5 rounded font-bold">
+                        SEVERITY 10 / CRITICAL
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
                     Request ID: <span className="font-mono">{result.request_id}</span> · Latency: <span className="font-mono tabular-nums">{result.duration_ms?.toFixed(2)} ms</span>
                   </div>
+                  {result.status_code === 'CRITICAL_SECURITY_ALERT' && (
+                    <div className="mt-2 p-2 rounded bg-rose-950/80 border border-rose-800 text-[11px] text-rose-200 leading-relaxed">
+                      <strong className="text-white">Threat Mitigation:</strong> Rogue/hallucinating AI agent activity intercepted. Connection terminated immediately. Threat indicator <code className="bg-slate-950 px-1 py-0.5 rounded text-rose-300">ROGUE_OR_HALLUCINATING_AGENT_DETECTED</code> dispatched to SIEM and SOC alarms.
+                    </div>
+                  )}
                 </div>
               </div>
 

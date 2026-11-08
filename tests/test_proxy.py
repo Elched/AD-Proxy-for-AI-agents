@@ -100,7 +100,7 @@ class TestActiveDirectoryProxy(unittest.TestCase):
         )
         res = self.engine.process_request(req)
         self.assertFalse(res.success)
-        self.assertEqual(res.status_code, "FORBIDDEN")
+        self.assertIn(res.status_code, ("FORBIDDEN", "CRITICAL_SECURITY_ALERT"))
         self.assertIn("explicitly denied", res.message)
 
     def test_07_protected_group_escalation_defense(self):
@@ -118,7 +118,7 @@ class TestActiveDirectoryProxy(unittest.TestCase):
         )
         res = self.engine.process_request(req)
         self.assertFalse(res.success)
-        self.assertEqual(res.status_code, "FORBIDDEN")
+        self.assertIn(res.status_code, ("FORBIDDEN", "CRITICAL_SECURITY_ALERT"))
         self.assertIn("protected Tier-0", res.message)
 
     def test_08_rbac_missing_approval_ticket_blocked(self):
