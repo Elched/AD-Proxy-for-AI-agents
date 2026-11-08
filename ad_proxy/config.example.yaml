@@ -1,0 +1,94 @@
+# ==============================================================================
+# Active Directory Secure LDAPS Proxy - Configuration Template
+# ==============================================================================
+# Use this template for production deployment. Inject passwords via environment
+# variables or OpenBao / HashiCorp Vault. Never commit secrets to version control.
+
+active_directory:
+  domain_name: "corp.example.com"
+  base_dn: "DC=corp,DC=example,DC=com"
+  domain_controllers:
+    - "dc01.corp.example.com"
+    - "dc02.corp.example.com"
+  ldaps_port: 636
+  timeout_seconds: 10
+  connect_retries: 3
+  verify_ssl: true
+  ca_cert_path: "/etc/ssl/certs/ad_root_ca.crt"
+
+ldaps:
+  min_version: "TLSv1.3"
+  cert_file: "/etc/ad-proxy/certs/server.crt"
+  key_file: "/etc/ad-proxy/certs/server.key"
+  ca_file: "/etc/ssl/certs/ad_root_ca.crt"
+  verify_client: false
+  cipher_suites:
+    - "ECDHE-ECDSA-AES256-GCM-SHA384"
+    - "ECDHE-RSA-AES256-GCM-SHA384"
+
+upstream_auth:
+  # Mode: "gmsa" (Group Managed Service Account) OR "service_account" (standard)
+  mode: "gmsa"
+  gmsa_name: "svc-adproxy$"
+
+  # If using mode: "service_account", configure secret injection:
+  # username: "CN=svc-ad-proxy,OU=ServiceAccounts,DC=corp,DC=example,DC=com"
+  # secret_provider: "openbao" # "openbao" | "vault" | "env"
+  # openbao:
+  #   address: "https://vault.corp.example.com:8200"
+  #   auth_method: "approle"
+  #   role_id: "${VAULT_ROLE_ID}"
+  #   secret_id: "${VAULT_SECRET_ID}"
+  #   secret_path: "secret/data/ad-proxy"
+  #   secret_key: "ad_password"
+  #   tls_ca_cert: "/etc/ssl/certs/vault_ca.crt"
+
+allowed_service_accounts:
+  - account_identifier: "ai-soc-agent"
+    description: "Autonomous SOC AI Agent with query and containment capabilities"
+    permitted_commands:
+      - "get_domain_info"
+      - "search_users"
+      - "get_user_attributes"
+      - "check_user_membership"
+      - "list_group_members"
+      - "search_computers"
+      - "disable_account"
+    denied_commands:
+      - "reset_password"
+      - "add_user_to_group"
+    rules:
+      - command: "disable_account"
+        require_approval_ticket: true
+
+  - account_identifier: "svc-onboarding-bot"
+    description: "HR and IT Onboarding Agent"
+    permitted_commands:
+      - "search_users"
+      - "get_user_attributes"
+      - "list_group_members"
+      - "add_user_to_group"
+      - "remove_user_from_group"
+    rules:
+      - command: "add_user_to_group"
+        allowed_groups:
+          - "VPN-Users"
+          - "Standard-Employees"
+        restricted_groups:
+          - "Domain Admins"
+          - "Enterprise Admins"
+
+siem:
+  enabled: true
+  format: "cef" # "cef" | "ecs" | "syslog_rfc5424"
+  destinations:
+    - "file"
+    - "syslog"
+  log_file_path: "/var/log/ad-proxy/audit.log"
+  syslog_host: "splunk.corp.example.com"
+  syslog_port: 514
+  syslog_protocol: "TCP"
+  log_all_queries: true
+
+listen_host: "0.0.0.0"
+listen_port: 10636

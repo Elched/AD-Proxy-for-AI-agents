@@ -1,0 +1,183 @@
+# ==============================================================================
+# Active Directory Secure LDAPS Proxy Configuration
+# ==============================================================================
+# This configuration controls domain connectivity, TLS certificates, upstream
+# authentication (gMSA or OpenBao/Env credentials), role-based access control (RBAC),
+# and SIEM audit logging for AI Agents and service accounts.
+
+# ------------------------------------------------------------------------------
+# 1. Active Directory Domain Settings
+# ------------------------------------------------------------------------------
+active_directory:
+  domain_name: "corp.acme.internal"
+  base_dn: "DC=corp,DC=acme,DC=internal"
+  domain_controllers:
+    - "dc01.corp.acme.internal"
+    - "dc02.corp.acme.internal"
+  ldaps_port: 636
+  timeout_seconds: 10
+  connect_retries: 3
+  verify_ssl: true
+  ca_cert_path: "./certs/corporate_root_ca.crt"
+
+# ------------------------------------------------------------------------------
+# 2. LDAPS Server Settings (Incoming Client / Agent Connections)
+# ------------------------------------------------------------------------------
+ldaps:
+  min_version: "TLSv1.2"
+  cert_file: "./certs/ad_proxy_server.crt"
+  key_file: "./certs/ad_proxy_server.key"
+  ca_file: "./certs/corporate_root_ca.crt"
+  verify_client: false
+  cipher_suites:
+    - "ECDHE-ECDSA-AES256-GCM-SHA384"
+    - "ECDHE-RSA-AES256-GCM-SHA384"
+    - "ECDHE-ECDSA-CHACHA20-POLY1305"
+    - "ECDHE-RSA-CHACHA20-POLY1305"
+
+# ------------------------------------------------------------------------------
+# 3. Upstream Service Account (Proxy -> Domain Controllers)
+# ------------------------------------------------------------------------------
+# Choose either:
+#   mode: "gmsa"             -> Group Managed Service Account (automatic password rotation)
+#   mode: "service_account"  -> Standard service account with OpenBao or Env secret injection
+upstream_auth:
+  mode: "service_account"
+  
+  # For gMSA mode:
+  gmsa_name: "svc-adproxy$"
+
+  # For standard service account mode:
+  username: "CN=svc-ad-proxy,OU=ServiceAccounts,DC=corp,DC=acme,DC=internal"
+  
+  # Secret Provider: "openbao" | "vault" | "env" | "direct"
+  secret_provider: "env"
+  password: "${AD_PROXY_SVC_PASSWORD:-AgentSecurePassword2026!}"
+
+  # OpenBao / HashiCorp Vault configuration (used when secret_provider is "openbao" or "vault"):
+  openbao:
+    address: "https://vault.corp.acme.internal:8200"
+    auth_method: "approle"           # "approle" or "token"
+    role_id: "${OPENBAO_ROLE_ID}"
+    secret_id: "${OPENBAO_SECRET_ID}"
+    token: "${OPENBAO_CLIENT_TOKEN}"
+    secret_path: "secret/data/ad-proxy"
+    secret_key: "service_account_password"
+    tls_ca_cert: "./certs/corporate_root_ca.crt"
+    cache_ttl_seconds: 300
+
+# ------------------------------------------------------------------------------
+# 4. Service Accounts Allowlist & Granular Permitted LDAPS Requests
+# ------------------------------------------------------------------------------
+allowed_service_accounts:
+  # AI Security & Incident Response Triage Agent
+  - account_identifier: "ai-triage-agent"
+    description: "Automated SOC & Triage AI Agent with read access and quarantine abilities"
+    permitted_commands:
+      - "get_domain_info"
+      - "search_users"
+      - "get_user_attributes"
+      - "check_user_membership"
+      - "list_group_members"
+      - "search_groups"
+      - "get_group_details"
+      - "search_computers"
+      - "disable_account"
+    denied_commands:
+      - "reset_password"
+      - "add_user_to_group"
+    rules:
+      - command: "disable_account"
+        require_approval_ticket: true
+      - command: "search_users"
+        max_search_results: 100
+        allowed_attributes:
+          - "sAMAccountName"
+          - "displayName"
+          - "mail"
+          - "department"
+          - "title"
+          - "telephoneNumber"
+          - "userAccountControl"
+
+  # IT Helpdesk Virtual Assistant Bot
+  - account_identifier: "svc-it-helpdesk-agent"
+    description: "AI Helpdesk Bot allowed to unlock accounts and manage specific VPN/Dev groups"
+    permitted_commands:
+      - "get_domain_info"
+      - "search_users"
+      - "get_user_attributes"
+      - "check_user_membership"
+      - "list_group_members"
+      - "add_user_to_group"
+      - "remove_user_from_group"
+      - "unlock_account"
+      - "enable_account"
+    denied_commands:
+      - "reset_password"
+      - "custom_search_filter"
+    rules:
+      - command: "add_user_to_group"
+        allowed_groups:
+          - "VPN-Users"
+          - "Developers"
+          - "Helpdesk-Tier1"
+        restricted_groups:
+          - "Domain Admins"
+          - "Enterprise Admins"
+          - "Schema Admins"
+          - "Administrators"
+        require_approval_ticket: true
+      - command: "remove_user_from_group"
+        allowed_groups:
+          - "VPN-Users"
+          - "Developers"
+        require_approval_ticket: true
+
+  # Auditing & Compliance Scanner Agent
+  - account_identifier: "svc-compliance-scanner"
+    description: "Read-only auditor for user attributes and OU structures"
+    permitted_commands:
+      - "get_domain_info"
+      - "search_users"
+      - "get_user_attributes"
+      - "get_organizational_units"
+      - "search_groups"
+      - "list_group_members"
+      - "search_computers"
+    denied_commands:
+      - "add_user_to_group"
+      - "remove_user_from_group"
+      - "enable_account"
+      - "disable_account"
+      - "reset_password"
+
+# ------------------------------------------------------------------------------
+# 5. SIEM & Audit Logging Configuration
+# ------------------------------------------------------------------------------
+# Standard formats:
+#   format: "ecs"            -> Elastic Common Schema (JSON)
+#   format: "cef"            -> Common Event Format (ArcSight, Splunk, QRadar)
+#   format: "syslog_rfc5424" -> RFC 5424 Syslog
+siem:
+  enabled: true
+  format: "ecs"
+  destinations:
+    - "file"
+    - "stdout"
+    # - "syslog"
+    # - "webhook"
+  log_file_path: "./logs/audit.log"
+  syslog_host: "siem-collector.corp.acme.internal"
+  syslog_port: 514
+  syslog_protocol: "UDP" # UDP | TCP | TLS
+  webhook_url: "https://splunk-hec.corp.acme.internal:8088/services/collector/raw"
+  webhook_token: "${SPLUNK_HEC_TOKEN}"
+  log_all_queries: true
+
+# ------------------------------------------------------------------------------
+# 6. Proxy Listener Settings
+# ------------------------------------------------------------------------------
+listen_host: "0.0.0.0"
+listen_port: 10636
+max_concurrent_connections: 100

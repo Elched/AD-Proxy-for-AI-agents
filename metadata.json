@@ -1,0 +1,6 @@
+{
+  "name": "Active Directory Secure LDAPS Proxy",
+  "description": "Enterprise-grade Active Directory LDAPS Proxy for AI Agents and service accounts with granular RBAC, gMSA/OpenBao secret injection, and SIEM auditing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
